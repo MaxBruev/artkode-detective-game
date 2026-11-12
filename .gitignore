@@ -1,0 +1,27 @@
+# Gradle and Java build output
+.gradle/
+**/build/
+out/
+*.class
+
+# IDE settings
+.idea/
+*.iml
+.vscode/
+.cursor/
+
+# Operating system files
+.DS_Store
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+infra/secrets/*.dec.env
+infra/secrets/*.plain.env
+infra/secrets/*.plain.env.tmp
+infra/secrets/*.tmp
+*age-key*
+.htpasswd
+*.pem
+*.key
