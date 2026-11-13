@@ -7,6 +7,7 @@ import os
 import secrets
 import time
 import unicodedata
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -41,9 +42,13 @@ def redis(*command: Any) -> Any:
     response = httpx.post(env("UPSTASH_REDIS_REST_URL").rstrip("/"), headers={"Authorization": "Bearer " + env("UPSTASH_REDIS_REST_TOKEN")}, json=list(command), timeout=8)
     response.raise_for_status()
     result = response.json()
+    if not isinstance(result, dict):
+        raise RuntimeError("Invalid Redis response")
     if result.get("error"):
         raise RuntimeError("Redis command failed")
-    return result.get("result")
+    if 'result' not in result:
+        raise RuntimeError("Invalid Redis response")
+    return result['result']
 
 
 def eval_script(script: str, keys: list[str], args: list[Any]) -> Any:
@@ -181,9 +186,11 @@ def telegram_call(method: str, payload: dict) -> None:
         raise RuntimeError('Telegram request failed') from None
 
 
-def send_telegram(chat: str, text: str, buttons: list | None = None) -> None:
+def send_telegram(chat: str, text: str, buttons: list | None = None, *, reply_markup: dict | None = None) -> None:
     payload = {'chat_id': chat, 'text': text}
-    if buttons is not None:
+    if reply_markup is not None:
+        payload['reply_markup'] = reply_markup
+    elif buttons is not None:
         payload['reply_markup'] = {'inline_keyboard': buttons}
     telegram_call('sendMessage', payload)
 
@@ -367,37 +374,147 @@ def answer_callback(callback_id: str) -> None:
 
 def team_page(chat_id: str, page: int, deletion: bool = False) -> None:
     page = max(1, min(page, 100000))
-    ids = redis('ZREVRANGE', 'game:teams', (page - 1) * 10, page * 10)
-    lines, buttons = [], []
-    for session_id in ids[:10]:
-        raw = redis('GET', 'game:session:' + session_id)
-        if not raw:
-            continue
-        session = json.loads(raw)
-        if not deletion:
-            try:
-                session = transition(session_id, '', 'get')
-            except HTTPException as exc:
-                if exc.status_code == 404:
-                    continue
-                raise
+    page_size = 10 if deletion else 5
+    ids = redis('ZREVRANGE', 'game:teams', (page - 1) * page_size, page * page_size)
+    displayed = 0
+    buttons = []
+    for session_id in ids[:page_size]:
         if deletion:
-            buttons.append([{'text': session['teamName'], 'callback_data': 'select:' + session_id}])
-        else:
-            status = 'активна' if session['status'] == 'in_progress' else 'завершена'
-            score = '' if session['status'] == 'in_progress' else f", {session['score']}/20"
-            lines.append(f"{session['teamName']} — {status}{score}")
+            raw = redis('GET', 'game:session:' + session_id)
+            session = json.loads(raw) if raw else None
+            if session and session.get('ready'):
+                buttons.append([{'text': session['teamName'], 'callback_data': 'select:' + session_id}])
+            continue
+        try:
+            session = transition(session_id, '', 'get')
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                continue
+            raise
+        status = 'Активна' if session['status'] == 'in_progress' else 'Завершена'
+        started = datetime.fromtimestamp(session['startedAt'] / 1000, timezone(timedelta(hours=3)))
+        text = f"👥 Команда: {session['teamName']}\n📊 Статус: {status}\n⏱ Начало: {started:%d.%m.%Y %H:%M} (МСК)"
+        if session['status'] != 'in_progress':
+            text += f"\n🏆 Результат: {session['score']}/20"
+        if displayed:
+            time.sleep(1)
+        send_telegram(chat_id, text, [[{'text': '🗑 Удалить', 'callback_data': 'team:' + session_id}]])
+        displayed += 1
     navigation = []
     if page > 1:
         navigation.append({'text': '←', 'callback_data': f"{'d' if deletion else 't'}page:{page-1}"})
-    if len(ids) > 10:
+    if len(ids) > page_size:
         navigation.append({'text': '→', 'callback_data': f"{'d' if deletion else 't'}page:{page+1}"})
+    if deletion:
+        if navigation:
+            buttons.append(navigation)
+        send_telegram(chat_id, 'Выберите команду для удаления:' if buttons else '📭 Команд пока нет', buttons or None)
+        return
     if navigation:
-        buttons.append(navigation)
-    title = 'Выберите команду для удаления:' if deletion else 'Команды:'
-    if not lines and not buttons:
-        title += '\nКоманд на этой странице нет.'
-    send_telegram(chat_id, title + ('\n\n' + '\n'.join(lines) if lines else ''), buttons or None)
+        if displayed:
+            time.sleep(1)
+        send_telegram(chat_id, f'Страница {page}', [navigation])
+    elif not displayed:
+        send_telegram(chat_id, '📭 Команд пока нет')
+
+
+def clear_team_button(chat_id: str, message_id: str) -> None:
+    if message_id.isdigit():
+        try:
+            telegram_call('editMessageReplyMarkup', {'chat_id': chat_id, 'message_id': int(message_id), 'reply_markup': {'inline_keyboard': []}})
+        except RuntimeError:
+            logging.getLogger(__name__).warning('Telegram button removal failed')
+
+
+def send_delete_confirmation(chat_id: str, team_name: str, nonce: str) -> None:
+    buttons = [
+        [{'text': '✅ Подтвердить', 'callback_data': 'confirm:' + nonce}],
+        [{'text': '❌ Отмена', 'callback_data': 'cancel:' + nonce}],
+    ]
+    send_telegram(chat_id, f"Удалить команду «{team_name}»?", buttons)
+
+
+def handle_telegram_callback(callback: dict, chat_id: str, sender_id: str) -> None:
+    value = callback.get('data', '')
+    if not isinstance(value, str):
+        return
+    if value.startswith(('dpage:', 'tpage:')):
+        try:
+            page = int(value.split(':', 1)[1])
+        except ValueError:
+            return
+        team_page(chat_id, page, value.startswith('dpage:'))
+    elif value.startswith(('team:', 'select:')):
+        session_id = value.split(':', 1)[1]
+        message_id = callback.get('message', {}).get('message_id')
+        source = str(message_id) if value.startswith('team:') and type(message_id) is int else ''
+        raw = redis('GET', 'game:session:' + session_id)
+        session = json.loads(raw) if raw else None
+        if not session or not session.get('ready'):
+            clear_team_button(chat_id, source)
+            send_telegram(chat_id, 'Команда уже удалена.')
+            return
+        nonce = secrets.token_urlsafe(16)
+        redis('SET', 'game:confirm:' + nonce, sender_id + ':' + session_id + ':' + source, 'EX', 300)
+        team_name = session['teamName']
+        if value.startswith('select:'):
+            send_telegram(chat_id, f'Команда «{team_name}»', [[{'text': 'Удалить', 'callback_data': 'delete:' + nonce}], [{'text': 'Отмена', 'callback_data': 'cancel:' + nonce}]])
+        else:
+            send_delete_confirmation(chat_id, team_name, nonce)
+    elif value.startswith('delete:'):
+        # Old messages may still contain the previous two-step delete button.
+        nonce = value[7:]
+        saved = redis('GET', 'game:confirm:' + nonce)
+        if not saved or not saved.startswith(sender_id + ':'):
+            send_telegram(chat_id, 'Подтверждение истекло или команда уже удалена.')
+            return
+        session_id = saved.split(':', 2)[1]
+        raw = redis('GET', 'game:session:' + session_id)
+        if not raw:
+            send_telegram(chat_id, 'Команда уже удалена.')
+            return
+        send_delete_confirmation(chat_id, json.loads(raw)['teamName'], nonce)
+    elif value.startswith('cancel:'):
+        nonce = value[7:]
+        saved = redis('GET', 'game:confirm:' + nonce)
+        if saved and saved.startswith(sender_id + ':') and redis('DEL', 'game:confirm:' + nonce):
+            send_telegram(chat_id, 'Удаление отменено.')
+        else:
+            send_telegram(chat_id, 'Подтверждение истекло или уже обработано.')
+    elif value.startswith('confirm:'):
+        nonce = value[8:]
+        saved = redis('GET', 'game:confirm:' + nonce)
+        if not saved or not saved.startswith(sender_id + ':'):
+            send_telegram(chat_id, 'Подтверждение истекло или команда уже удалена.')
+            return
+        parts = saved.split(':', 2)
+        session_id = parts[1]
+        raw = eval_script(CONFIRM_DELETE, ['game:confirm:' + nonce, 'game:session:' + session_id], [saved])
+        if raw:
+            session = json.loads(raw)
+            if len(parts) > 2:
+                clear_team_button(chat_id, parts[2])
+            cancel_message(session.get('messageId'))
+            send_telegram(chat_id, f"✅ Команда „{session['teamName']}“ удалена")
+        else:
+            if not redis('GET', 'game:session:' + session_id):
+                if len(parts) > 2:
+                    clear_team_button(chat_id, parts[2])
+                send_telegram(chat_id, 'Команда уже удалена.')
+            else:
+                send_telegram(chat_id, 'Подтверждение истекло или уже обработано.')
+
+
+TEAM_LIST_BUTTON = '📋 Список команд'
+START_READY = ('🟢 Artcode Detective — сервис работает\n\n'
+               '✅ Telegram → Backend: соединение установлено\n\n'
+               '✅ Backend → Redis: соединение установлено\n\n'
+               '🤖 Бот готов к работе.\n\n'
+               'Используй кнопку «📋 Список команд» для управления игровыми сессиями.')
+START_UNAVAILABLE = ('🟡 Artcode Detective — частичная недоступность\n\n'
+                     '✅ Telegram → Backend: соединение установлено\n\n'
+                     '❌ Backend → Redis: соединение отсутствует\n\n'
+                     '⚠️ Управление командами временно недоступно.')
 
 
 def handle_telegram(data: dict) -> None:
@@ -406,75 +523,59 @@ def handle_telegram(data: dict) -> None:
         return
     callback = data.get('callback_query')
     message = callback.get('message', {}) if isinstance(callback, dict) else data.get('message', {})
+    if not isinstance(message, dict):
+        return
     sender = callback.get('from', {}) if isinstance(callback, dict) else message.get('from', {})
     chat = message.get('chat', {})
-    chat_id, sender_id = str(chat.get('id', '')), str(sender.get('id', ''))
-    allowed = {item.strip() for item in env('TELEGRAM_ADMIN_IDS').split(',') if item.strip()}
-    if chat.get('type') != 'private' or sender_id not in allowed or chat_id != sender_id:
+    if not isinstance(sender, dict) or not isinstance(chat, dict):
         return
-    if not redis('SET', 'game:telegram:update:' + str(update_id), '1', 'EX', 86400, 'NX'):
+    if type(chat.get('id')) is not int or type(sender.get('id')) is not int:
+        return
+    chat_id, sender_id = str(chat['id']), str(sender['id'])
+    if chat.get('type') != 'private' or chat_id != sender_id:
+        return
+    text = message.get('text', '')
+    parts = text.split() if isinstance(text, str) else []
+    command = parts[0].split('@', 1)[0].lower() if parts else ''
+    allowed = {item.strip() for item in os.getenv('TELEGRAM_ADMIN_IDS', '').split(',') if item.strip()}
+    if sender_id not in allowed:
+        if not isinstance(callback, dict) and command == '/start':
+            send_telegram(chat_id, 'Доступ запрещён.')
         return
     if isinstance(callback, dict):
         callback_id = callback.get('id')
         if not isinstance(callback_id, str):
             return
         answer_callback(callback_id)
-        value = callback.get('data', '')
-        if not isinstance(value, str):
+    if command == '/start' and not isinstance(callback, dict):
+        try:
+            if redis('PING') != 'PONG':
+                raise RuntimeError('Redis ping failed')
+            redis('SADD', 'game:telegram:subscribers', sender_id)
+            fresh = redis('SET', 'game:telegram:update:' + str(update_id), '1', 'EX', 86400, 'NX')
+        except (httpx.HTTPError, RuntimeError, ValueError):
+            send_telegram(chat_id, START_UNAVAILABLE)
             return
-        if value.startswith(('dpage:', 'tpage:')):
+        if fresh:
             try:
-                page = int(value.split(':', 1)[1])
-            except ValueError:
-                return
-            team_page(chat_id, page, value.startswith('dpage:'))
-        elif value.startswith('select:'):
-            session_id = value[7:]
-            raw = redis('GET', 'game:session:' + session_id)
-            if not raw or not json.loads(raw)['ready']:
-                send_telegram(chat_id, 'Команда не найдена.')
-                return
-            nonce = secrets.token_urlsafe(16)
-            redis('SET', 'game:confirm:' + nonce, sender_id + ':' + session_id, 'EX', 300)
-            send_telegram(chat_id, f"Команда «{json.loads(raw)['teamName']}»", [[{'text': 'Удалить', 'callback_data': 'delete:' + nonce}], [{'text': 'Отмена', 'callback_data': 'cancel:' + nonce}]])
-        elif value.startswith('delete:'):
-            nonce = value[7:]
-            saved = redis('GET', 'game:confirm:' + nonce)
-            if not saved or not saved.startswith(sender_id + ':'):
-                send_telegram(chat_id, 'Подтверждение не найдено или истекло.')
-                return
-            send_telegram(chat_id, 'Подтвердите удаление команды.', [[{'text': 'Подтвердить', 'callback_data': 'confirm:' + nonce}], [{'text': 'Отмена', 'callback_data': 'cancel:' + nonce}]])
-        elif value.startswith('cancel:'):
-            nonce = value[7:]
-            saved = redis('GET', 'game:confirm:' + nonce)
-            if saved and saved.startswith(sender_id + ':'):
-                redis('DEL', 'game:confirm:' + nonce)
-            send_telegram(chat_id, 'Удаление отменено.')
-        elif value.startswith('confirm:'):
-            nonce = value[8:]
-            saved = redis('GET', 'game:confirm:' + nonce)
-            if not saved or not saved.startswith(sender_id + ':'):
-                send_telegram(chat_id, 'Подтверждение не найдено или истекло.')
-                return
-            session_id = saved.split(':', 1)[1]
-            raw = eval_script(CONFIRM_DELETE, ['game:confirm:' + nonce, 'game:session:' + session_id], [saved])
-            if raw:
-                cancel_message(json.loads(raw).get('messageId'))
-                send_telegram(chat_id, 'Команда удалена.')
-            else:
-                send_telegram(chat_id, 'Команда уже удалена.')
+                send_telegram(chat_id, START_READY, reply_markup={
+                    'keyboard': [[{'text': TEAM_LIST_BUTTON}]],
+                    'resize_keyboard': True,
+                    'is_persistent': True,
+                })
+            except Exception:
+                # A webhook retry can resend when Telegram rejects or times out.
+                try:
+                    redis('DEL', 'game:telegram:update:' + str(update_id))
+                except (httpx.HTTPError, RuntimeError, ValueError):
+                    logging.getLogger(__name__).warning('Telegram update claim cleanup failed')
+                raise
         return
-    text = message.get('text', '')
-    if not isinstance(text, str):
+    if not redis('SET', 'game:telegram:update:' + str(update_id), '1', 'EX', 86400, 'NX'):
         return
-    parts = text.split()
-    if not parts:
-        return
-    command = parts[0].split('@', 1)[0].lower()
-    if command == '/start':
-        redis('SADD', 'game:telegram:subscribers', sender_id)
-        send_telegram(chat_id, 'Команды: /teams, /delete')
-    elif command == '/teams':
+    if isinstance(callback, dict):
+        handle_telegram_callback(callback, chat_id, sender_id)
+    elif text == TEAM_LIST_BUTTON or command == '/teams':
         team_page(chat_id, 1)
     elif command == '/delete':
         team_page(chat_id, 1, True)

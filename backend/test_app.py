@@ -53,6 +53,7 @@ class BoundaryTests(unittest.TestCase):
     def test_telegram_private_allowlist_secret_and_dedupe(self):
         seen=set(); sent=[]
         def redis(*args):
+            if args[0]=='PING': return 'PONG'
             if args[0]=='SET':
                 if args[1] in seen: return None
                 seen.add(args[1]); return 'OK'
@@ -64,7 +65,7 @@ class BoundaryTests(unittest.TestCase):
             coroutine=api.telegram(Request(),secret)
             try: coroutine.send(None)
             except StopIteration as result: return result.value
-        with patch.object(api,'redis',side_effect=redis), patch.object(api,'send_telegram',side_effect=lambda *x:sent.append(x)), patch.object(api,'run_in_threadpool',immediate):
+        with patch.object(api,'redis',side_effect=redis), patch.object(api,'send_telegram',side_effect=lambda *x, **kw:sent.append((x, kw))), patch.object(api,'run_in_threadpool',immediate):
             with self.assertRaises(HTTPException): call(None)
             update['message']['chat']['type']='group'
             call('webhook-secret')
@@ -72,6 +73,98 @@ class BoundaryTests(unittest.TestCase):
             call('webhook-secret')
             call('webhook-secret')
             self.assertEqual(len(sent),1)
+
+    def test_start_health_and_authorization(self):
+        update = {'update_id': 1, 'message': {'chat': {'id': 123, 'type': 'private'},
+                  'from': {'id': 123}, 'text': '/start'}}
+        seen, subscribers, commands = set(), set(), []
+        def redis(*args):
+            commands.append(args)
+            if args[0] == 'PING': return 'PONG'
+            if args[0] == 'SADD': subscribers.add(args[2]); return 1
+            if args[0] == 'SET':
+                if args[1] in seen: return None
+                seen.add(args[1]); return 'OK'
+            raise AssertionError(args)
+        with patch.object(api, 'redis', side_effect=redis), patch.object(api, 'send_telegram') as send:
+            api.handle_telegram(update)
+            api.handle_telegram(update)
+            self.assertEqual(send.call_count, 1)
+            self.assertEqual(subscribers, {'123'})
+            self.assertEqual(send.call_args.args[1], '🟢 Artcode Detective — сервис работает\n\n✅ Telegram → Backend: соединение установлено\n\n✅ Backend → Redis: соединение установлено\n\n🤖 Бот готов к работе.\n\nИспользуй кнопку «📋 Список команд» для управления игровыми сессиями.')
+            self.assertEqual(send.call_args.kwargs['reply_markup'], {'keyboard': [[{'text': '📋 Список команд'}]], 'resize_keyboard': True, 'is_persistent': True})
+            self.assertTrue(all(c[0] in ('PING', 'SADD', 'SET') for c in commands))
+            update['update_id'] = 2
+            api.handle_telegram(update)
+            self.assertEqual(send.call_count, 2)
+            self.assertEqual(sum(c[0] == 'PING' for c in commands), 3)
+
+        update['update_id'] = 3
+        with patch.object(api, 'redis', side_effect=RuntimeError('offline')), patch.object(api, 'send_telegram') as send:
+            api.handle_telegram(update)
+            self.assertEqual(send.call_args.args[1], '🟡 Artcode Detective — частичная недоступность\n\n✅ Telegram → Backend: соединение установлено\n\n❌ Backend → Redis: соединение отсутствует\n\n⚠️ Управление командами временно недоступно.')
+            update['message']['chat']['id'] = update['message']['from']['id'] = 456
+            api.handle_telegram(update)
+            self.assertEqual(send.call_args.args, ('456', 'Доступ запрещён.'))
+
+        update['message']['chat']['id'] = update['message']['from']['id'] = 123
+        for failed in ('SADD', 'SET'):
+            def failing_redis(*args):
+                if args[0] == failed: raise RuntimeError('offline')
+                return 'PONG' if args[0] == 'PING' else 1
+            with patch.object(api, 'redis', side_effect=failing_redis), patch.object(api, 'send_telegram') as send:
+                api.handle_telegram(update)
+                self.assertEqual(send.call_args.args[1], api.START_UNAVAILABLE)
+
+    def test_team_list_button_routes_to_first_page(self):
+        update = {'update_id': 10, 'message': {'chat': {'id': 123, 'type': 'private'},
+                  'from': {'id': 123}, 'text': '📋 Список команд'}}
+        with patch.object(api, 'redis', return_value='OK'), patch.object(api, 'team_page') as page:
+            api.handle_telegram(update)
+            page.assert_called_once_with('123', 1)
+
+    def test_redis_ping_uses_upstash_command_and_result(self):
+        response = unittest.mock.Mock()
+        response.json.return_value = {'result': 'PONG'}
+        with patch.dict(os.environ, {'UPSTASH_REDIS_REST_URL': 'https://redis.example', 'UPSTASH_REDIS_REST_TOKEN': 'token'}), \
+             patch.object(api.httpx, 'post', return_value=response) as post:
+            self.assertEqual(api.redis('PING'), 'PONG')
+            self.assertEqual(post.call_args.kwargs['json'], ['PING'])
+
+            for malformed in ([], {}, 'PONG'):
+                response.json.return_value = malformed
+                with self.assertRaises(RuntimeError): api.redis('PING')
+
+    def test_start_without_admins_and_retry_after_send_failure(self):
+        update = {'update_id': 12, 'message': {'chat': {'id': 123, 'type': 'private'},
+                  'from': {'id': 123}, 'text': '/start'}}
+        for config in ({'TELEGRAM_ADMIN_IDS': ''}, {}):
+            with patch.dict(os.environ, config, clear=True), patch.object(api, 'redis') as redis, \
+                 patch.object(api, 'send_telegram') as send:
+                api.handle_telegram(update)
+                send.assert_called_once_with('123', 'Доступ запрещён.')
+                redis.assert_not_called()
+        seen = set()
+        def redis(*args):
+            if args[0] == 'PING': return 'PONG'
+            if args[0] == 'SADD': return 1
+            if args[0] == 'DEL': seen.discard(args[1]); return 1
+            if args[0] == 'SET':
+                if args[1] in seen: return None
+                seen.add(args[1]); return 'OK'
+            raise AssertionError(args)
+        with patch.object(api, 'redis', side_effect=redis), \
+             patch.object(api, 'send_telegram', side_effect=[RuntimeError('Telegram failed'), None]) as send:
+            with self.assertRaises(RuntimeError): api.handle_telegram(update)
+            api.handle_telegram(update)
+            self.assertEqual(send.call_count, 2)
+
+    def test_callback_acknowledged_before_redis_failure(self):
+        update = {'update_id': 11, 'callback_query': {'id': 'query', 'from': {'id': 123},
+                  'message': {'chat': {'id': 123, 'type': 'private'}}, 'data': 'tpage:1'}}
+        with patch.object(api, 'answer_callback') as answer, patch.object(api, 'redis', side_effect=RuntimeError('offline')):
+            with self.assertRaises(RuntimeError): api.handle_telegram(update)
+            answer.assert_called_once_with('query')
 
     def test_terminal_and_conflict_snapshots(self):
         answers = json.dumps(api.EMPTY)
@@ -95,7 +188,12 @@ class BoundaryTests(unittest.TestCase):
     def test_admin_selection_confirm_and_cancel(self):
         saved = {}
         messages = []
-        sessions = {'first': {'ready': True, 'teamName': 'Первая'}, 'second': {'ready': True, 'teamName': 'Вторая'}}
+        sessions = {
+            'first': {'ready': True, 'teamName': 'Первая', 'status': 'in_progress',
+                      'startedAt': 0, 'messageId': 'expiry-first'},
+            'second': {'ready': True, 'teamName': 'Вторая', 'status': 'submitted',
+                       'startedAt': 0, 'score': 12},
+        }
         def redis(*args):
             if args[0] == 'SET':
                 if args[1].startswith('game:telegram:update:') and args[1] in saved: return None
@@ -107,7 +205,7 @@ class BoundaryTests(unittest.TestCase):
                     return json.dumps(value) if value else None
                 return saved.get(args[1])
             if args[0] == 'DEL':
-                saved.pop(args[1], None)
+                return int(saved.pop(args[1], None) is not None)
             if args[0] == 'ZREVRANGE': return list(sessions)
         def evaluate(script, keys, args):
             self.assertEqual(script, api.CONFIRM_DELETE)
@@ -118,25 +216,74 @@ class BoundaryTests(unittest.TestCase):
             return json.dumps(session) if session else None
         def update(number, value):
             return {'update_id': number, 'callback_query': {'id': str(number), 'from': {'id': 123},
-                    'message': {'chat': {'id': 123, 'type': 'private'}}, 'data': value}}
+                    'message': {'chat': {'id': 123, 'type': 'private'}, 'message_id': 77}, 'data': value}}
         with patch.object(api, 'redis', side_effect=redis), patch.object(api, 'eval_script', side_effect=evaluate), \
              patch.object(api, 'send_telegram', side_effect=lambda *args: messages.append(args)), \
-             patch.object(api, 'answer_callback'), patch.object(api, 'cancel_message'):
+             patch.object(api, 'answer_callback'), patch.object(api, 'cancel_message') as cancel_message, \
+             patch.object(api, 'telegram_call') as telegram_call, patch.object(api.time, 'sleep'), \
+             patch.object(api, 'transition', side_effect=lambda sid, *_: sessions[sid]):
             api.handle_telegram({'update_id': 1, 'message': {'chat': {'id': 123, 'type': 'private'}, 'from': {'id': 123}, 'text': '/delete'}})
-            self.assertEqual(len(messages[-1][2]), 2)
-            api.handle_telegram(update(2, 'select:first'))
+            self.assertEqual([row[0]['callback_data'] for row in messages[-1][2]], ['select:first', 'select:second'])
+            messages.clear()
+            api.handle_telegram({'update_id': 3, 'message': {'chat': {'id': 123, 'type': 'private'}, 'from': {'id': 123}, 'text': '/teams'}})
+            self.assertEqual(len(messages), 2)
+            self.assertTrue(messages[0][1].startswith('👥 Команда: Первая\n📊 Статус: Активна\n⏱ Начало:'))
+            self.assertIn('01.01.1970 03:00 (МСК)', messages[0][1])
+            self.assertIn('📊 Статус: Завершена', messages[1][1])
+            self.assertIn('🏆 Результат: 12/20', messages[1][1])
+            first_button = messages[0][2][0][0]
+            second_button = messages[1][2][0][0]
+            self.assertEqual(first_button, {'text': '🗑 Удалить', 'callback_data': 'team:first'})
+            self.assertEqual(second_button, {'text': '🗑 Удалить', 'callback_data': 'team:second'})
+            api.handle_telegram(update(2, first_button['callback_data']))
+            self.assertEqual(messages[-1][1], 'Удалить команду «Первая»?')
             nonce = messages[-1][2][0][0]['callback_data'].split(':')[1]
-            api.handle_telegram(update(3, 'delete:' + nonce))
             api.handle_telegram(update(4, 'confirm:' + nonce))
             self.assertNotIn('first', sessions)
             self.assertIn('second', sessions)
+            self.assertEqual(messages[-1][1], '✅ Команда „Первая“ удалена')
+            cancel_message.assert_called_once_with('expiry-first')
+            telegram_call.assert_called_once_with('editMessageReplyMarkup', {'chat_id': '123', 'message_id': 77, 'reply_markup': {'inline_keyboard': []}})
+            sessions['replacement'] = {'ready': True, 'teamName': 'Первая'}
             api.handle_telegram(update(5, 'confirm:' + nonce))
             self.assertIn('second', sessions)
-            api.handle_telegram(update(6, 'select:second'))
+            api.handle_telegram(update(10, first_button['callback_data']))
+            self.assertEqual(messages[-1][1], 'Команда уже удалена.')
+            self.assertIn('replacement', sessions)
+            api.handle_telegram(update(9, 'cancel:' + nonce))
+            self.assertEqual(messages[-1][1], 'Подтверждение истекло или уже обработано.')
+            api.handle_telegram(update(6, 'team:second'))
             nonce = messages[-1][2][0][0]['callback_data'].split(':')[1]
             api.handle_telegram(update(7, 'cancel:' + nonce))
             api.handle_telegram(update(8, 'confirm:' + nonce))
             self.assertIn('second', sessions)
+
+    def test_team_page_empty_and_pagination(self):
+        sent = []
+        with patch.object(api, 'send_telegram', side_effect=lambda *args: sent.append(args)), \
+             patch.object(api, 'redis', return_value=[]):
+            api.team_page('123', 1)
+        self.assertEqual(sent[-1][1], '📭 Команд пока нет')
+        sent.clear()
+        with patch.object(api, 'send_telegram', side_effect=lambda *args: sent.append(args)), \
+             patch.object(api, 'redis', return_value=['stale'] * 6), \
+             patch.object(api, 'transition', side_effect=HTTPException(404)):
+            api.team_page('123', 1)
+        self.assertEqual(sent[-1][2][0][0]['callback_data'], 'tpage:2')
+
+    def test_stale_card_and_concurrent_confirm_clear_only_card(self):
+        callback = {'data': 'team:gone', 'message': {'message_id': 77}}
+        with patch.object(api, 'redis', return_value=None), patch.object(api, 'telegram_call') as call, \
+             patch.object(api, 'send_telegram') as send:
+            api.handle_telegram_callback(callback, '123', '123')
+            call.assert_called_once_with('editMessageReplyMarkup', {'chat_id': '123', 'message_id': 77, 'reply_markup': {'inline_keyboard': []}})
+            self.assertEqual(send.call_args.args[1], 'Команда уже удалена.')
+        callback['data'] = 'confirm:nonce'
+        with patch.object(api, 'redis', side_effect=lambda *args: '123:gone:77' if args[1] == 'game:confirm:nonce' else None), patch.object(api, 'eval_script', return_value=None), \
+             patch.object(api, 'telegram_call') as call, patch.object(api, 'send_telegram') as send:
+            api.handle_telegram_callback(callback, '123', '123')
+            call.assert_called_once()
+            self.assertEqual(send.call_args.args[1], 'Команда уже удалена.')
 
     def test_duplicate_registration_retries_same_reservation_after_publish_failure(self):
         lock=threading.Lock(); data={}; idems={}; names={}; calls=[]
