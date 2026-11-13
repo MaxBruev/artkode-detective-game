@@ -148,8 +148,9 @@ class Mutation(BaseModel):
 
 
 def snapshot(s: dict, token: bool = False) -> dict:
-    fields = ('sessionId','teamName','status','startedAt','endAt','submittedAt','answers','score','version')
+    fields = ('sessionId', 'teamName', 'status', 'startedAt', 'endAt', 'answers', 'score', 'version')
     result = {key: s[key] for key in fields}
+    result['submittedAt'] = s.get('submittedAt')
     result['answers'] = json.loads(result['answers'])
     result['serverNow'] = now_ms()
     if token:

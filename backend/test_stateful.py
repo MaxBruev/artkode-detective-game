@@ -28,6 +28,8 @@ class MemoryStore:
                 if keys[1] in self.names:
                     return ['taken']
                 session = json.loads(args[0])
+                if session.get('submittedAt') is None:
+                    session.pop('submittedAt', None)
                 session.update(startedAt=self.now, endAt=self.now + 900000)
                 sid = session['sessionId']
                 self.sessions[sid] = session
@@ -119,6 +121,7 @@ class StatefulTests(unittest.TestCase):
         with patch.dict('os.environ', {'TELEGRAM_ADMIN_IDS': ''}):
             session = self.create('Команда без бота', 'no-telegram-idempotency-key')
             self.assertEqual(session['status'], 'in_progress')
+            self.assertIsNone(session['submittedAt'])
             self.assertEqual(session['endAt'] - session['startedAt'], 900000)
 
             self.store.now = session['endAt']
