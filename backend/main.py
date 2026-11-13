@@ -208,6 +208,16 @@ return 1
 '''
 
 
+def quest_duration(session: dict) -> str:
+    started, submitted = session.get('startedAt'), session.get('submittedAt')
+    if session.get('status') != 'submitted' or type(started) is not int or type(submitted) is not int:
+        return '—'
+    if submitted < started:
+        return '—'
+    minutes, seconds = divmod((submitted - started) // 1000, 60)
+    return f'{minutes:02d}:{seconds:02d}'
+
+
 def notify_once(s: dict, event: str) -> None:
     # Claim before sending: Telegram cannot deduplicate an ambiguous send failure.
     admin_ids = os.getenv('TELEGRAM_ADMIN_IDS', '')
@@ -216,7 +226,12 @@ def notify_once(s: dict, event: str) -> None:
             if not redis('SISMEMBER', 'game:telegram:subscribers', admin):
                 continue
             if eval_script(CLAIM_NOTICE, ['game:session:' + s['sessionId']], [event, admin]):
-                text = (f"🔎 Команда «{s['teamName']}» начала расследование." if event == 'start' else f"🏁 Команда «{s['teamName']}» прошла квест.\n\n🏆 Баллы: {s['score']}/20.")
+                if event == 'start':
+                    text = f"🔎 Команда «{s['teamName']}» начала расследование."
+                else:
+                    result = 'прошла квест' if s['status'] == 'submitted' else 'не завершила квест вовремя'
+                    text = (f"🏁 Команда «{s['teamName']}» {result}.\n\n"
+                            f"🏆 Баллы: {s['score']}/20 · ⏱ Время: {quest_duration(s)}")
                 send_telegram(admin, text)
         except Exception:
             logging.getLogger(__name__).warning('Telegram notification failed')
@@ -382,7 +397,8 @@ for i=1,#scan[2],2 do
  if raw then
   local s=cjson.decode(raw)
   if s.ready and (s.status=='submitted' or s.status=='timed_out') and type(s.score)=='number' and type(s.teamName)=='string' then
-   table.insert(result,cjson.encode({id=id,teamName=s.teamName,score=s.score,submittedAt=s.submittedAt}))
+   table.insert(result,cjson.encode({id=id,teamName=s.teamName,score=s.score,status=s.status,
+                                     startedAt=s.startedAt,submittedAt=s.submittedAt}))
   end
  end
 end
@@ -421,7 +437,7 @@ def leaderboard(chat_id: str) -> None:
     lines = ['🏆 ОБЩИЙ РЕЙТИНГ\n']
     for rank, (_, session) in enumerate(sorted(sessions.items(), key=sort_key), 1):
         medal = {1: '🥇 ', 2: '🥈 ', 3: '🥉 '}.get(rank, '')
-        lines.append(f"{medal}{rank}. {session['teamName']} — {session['score']}/20")
+        lines.append(f"{medal}{rank}. {session['teamName']} — {session['score']}/20 · ⏱ {quest_duration(session)}")
 
     # Count UTF-16 units conservatively for Telegram, keeping every row intact.
     message = lines[0]
@@ -456,10 +472,16 @@ def team_page(chat_id: str, page: int, deletion: bool = False) -> None:
                 continue
             raise
         status = 'Активна' if session['status'] == 'in_progress' else 'Завершена'
-        started = datetime.fromtimestamp(session['startedAt'] / 1000, timezone(timedelta(hours=3)))
-        text = f"👥 Команда: {session['teamName']}\n📊 Статус: {status}\n⏱ Начало: {started:%d.%m.%Y %H:%M} (МСК)"
+        started_at = session.get('startedAt')
+        started = '—'
+        if type(started_at) is int:
+            start_time = datetime.fromtimestamp(started_at / 1000, timezone(timedelta(hours=3)))
+            started = f'{start_time:%d.%m.%Y %H:%M} (МСК)'
+        text = f"👥 Команда: {session['teamName']}\n📊 Статус: {status}\n⏱ Начало: {started}"
         if session['status'] != 'in_progress':
-            text += f"\n🏆 Результат: {session['score']}/20"
+            text += f"\n🏆 Результат: {session['score']}/20 · ⏱ Время: {quest_duration(session)}"
+        else:
+            text += '\n⏱ Время: —'
         if displayed:
             time.sleep(1)
         send_telegram(chat_id, text, [[{'text': '🗑 Удалить', 'callback_data': 'team:' + session_id}]])

@@ -127,8 +127,10 @@ class BoundaryTests(unittest.TestCase):
         update = {'update_id': 10, 'message': {'chat': {'id': 123, 'type': 'private'},
                   'from': {'id': 123}, 'text': '🏆 Общий рейтинг'}}
         records = [
-            ('a', {'teamName': 'Поздняя', 'status': 'submitted', 'score': 20, 'submittedAt': 200, 'ready': True}),
-            ('b', {'teamName': '<Ранняя & команда>', 'status': 'timed_out', 'score': 20, 'submittedAt': 100, 'ready': True}),
+            ('a', {'teamName': 'Поздняя', 'status': 'submitted', 'score': 20,
+                   'startedAt': 900000, 'submittedAt': 983000, 'ready': True}),
+            ('b', {'teamName': '<Ранняя & команда>', 'status': 'timed_out', 'score': 20,
+                   'startedAt': 1000, 'submittedAt': 901000, 'ready': True}),
             ('c', {'teamName': 'Без времени Б', 'status': 'submitted', 'score': 20, 'ready': True}),
             ('d', {'teamName': 'Без времени А', 'status': 'submitted', 'score': 20, 'submittedAt': None, 'ready': True}),
             ('e', {'teamName': 'Активная', 'status': 'in_progress', 'score': 20, 'ready': True}),
@@ -142,9 +144,9 @@ class BoundaryTests(unittest.TestCase):
              patch.object(api, 'notify_once') as notify:
             api.handle_telegram(update)
             text = send.call_args.args[1]
-            self.assertEqual(text.splitlines(), ['🏆 ОБЩИЙ РЕЙТИНГ', '', '🥇 1. <Ранняя & команда> — 20/20',
-                '🥈 2. Поздняя — 20/20', '🥉 3. Без времени А — 20/20',
-                '4. Без времени Б — 20/20', '5. Низкий — 0/20'])
+            self.assertEqual(text.splitlines(), ['🏆 ОБЩИЙ РЕЙТИНГ', '', '🥇 1. <Ранняя & команда> — 20/20 · ⏱ —',
+                '🥈 2. Поздняя — 20/20 · ⏱ 01:23', '🥉 3. Без времени А — 20/20 · ⏱ —',
+                '4. Без времени Б — 20/20 · ⏱ —', '5. Низкий — 0/20 · ⏱ —'])
             transition.assert_not_called()
             notify.assert_not_called()
 
@@ -236,7 +238,7 @@ class BoundaryTests(unittest.TestCase):
             'first': {'ready': True, 'teamName': 'Первая', 'status': 'in_progress',
                       'startedAt': 0, 'messageId': 'expiry-first'},
             'second': {'ready': True, 'teamName': 'Вторая', 'status': 'submitted',
-                       'startedAt': 0, 'score': 12},
+                       'startedAt': 0, 'submittedAt': 125000, 'score': 12},
         }
         def redis(*args):
             if args[0] == 'SET':
@@ -273,8 +275,9 @@ class BoundaryTests(unittest.TestCase):
             self.assertEqual(len(messages), 2)
             self.assertTrue(messages[0][1].startswith('👥 Команда: Первая\n📊 Статус: Активна\n⏱ Начало:'))
             self.assertIn('01.01.1970 03:00 (МСК)', messages[0][1])
+            self.assertIn('⏱ Время: —', messages[0][1])
             self.assertIn('📊 Статус: Завершена', messages[1][1])
-            self.assertIn('🏆 Результат: 12/20', messages[1][1])
+            self.assertIn('🏆 Результат: 12/20 · ⏱ Время: 02:05', messages[1][1])
             first_button = messages[0][2][0][0]
             second_button = messages[1][2][0][0]
             self.assertEqual(first_button, {'text': '🗑 Удалить', 'callback_data': 'team:first'})

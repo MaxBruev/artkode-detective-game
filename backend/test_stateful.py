@@ -142,11 +142,13 @@ class StatefulTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as conflict:
             api.transition(first['sessionId'], token, 'progress', api.Mutation(version=0, answers=api.EMPTY, score=4))
         self.assertEqual(conflict.exception.status_code, 409)
+        self.store.now += 155000
         terminal = api.transition(first['sessionId'], token, 'finish', api.Mutation(version=1, answers=api.EMPTY, score=7))
         self.assertEqual(terminal['status'], 'submitted')
         self.assertEqual(api.transition(first['sessionId'], token, 'finish', mutation)['score'], 7)
         self.assertEqual(self.store.sessions[second['sessionId']]['status'], 'in_progress')
         self.assertEqual(len(self.notices), 3)
+        self.assertIn('🏆 Баллы: 7/20 · ⏱ Время: 02:35', self.notices[-1][1])
 
     def test_timeout_delete_reuse_and_old_expiry(self):
         first = self.create('Команда', 'first-idempotency-key')
@@ -156,6 +158,8 @@ class StatefulTests(unittest.TestCase):
         self.assertEqual((terminal['status'], terminal['score']), ('timed_out', 0))
         api.transition(first['sessionId'], '', 'expire')
         self.assertEqual(len(self.notices), 2)
+        self.assertIn('не завершила квест вовремя', self.notices[-1][1])
+        self.assertIn('🏆 Баллы: 0/20 · ⏱ Время: —', self.notices[-1][1])
         self.store.eval(api.CONFIRM_DELETE, ['confirm', 'game:session:' + first['sessionId']], ['value'])
         with self.assertRaises(HTTPException):
             api.transition(first['sessionId'], '', 'expire')
