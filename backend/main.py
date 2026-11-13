@@ -202,7 +202,8 @@ return 1
 
 def notify_once(s: dict, event: str) -> None:
     # Claim before sending: Telegram cannot deduplicate an ambiguous send failure.
-    for admin in filter(None, (item.strip() for item in env('TELEGRAM_ADMIN_IDS').split(','))):
+    admin_ids = os.getenv('TELEGRAM_ADMIN_IDS', '')
+    for admin in filter(None, (item.strip() for item in admin_ids.split(','))):
         try:
             if not redis('SISMEMBER', 'game:telegram:subscribers', admin):
                 continue

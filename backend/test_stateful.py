@@ -115,6 +115,18 @@ class StatefulTests(unittest.TestCase):
     def create(self, name, key):
         return json.loads(api.register(api.Registration(teamName=name), key).body)
 
+    def test_session_starts_and_expires_without_telegram_admins(self):
+        with patch.dict('os.environ', {'TELEGRAM_ADMIN_IDS': ''}):
+            session = self.create('Команда без бота', 'no-telegram-idempotency-key')
+            self.assertEqual(session['status'], 'in_progress')
+            self.assertEqual(session['endAt'] - session['startedAt'], 900000)
+
+            self.store.now = session['endAt']
+            result = api.transition(session['sessionId'], '', 'expire')
+            self.assertEqual(result['status'], 'timed_out')
+
+        self.assertEqual(self.notices, [])
+
     def test_independent_sessions_idempotent_save_and_finish(self):
         first = self.create('Первая', 'first-idempotency-key')
         second = self.create('Вторая', 'second-idempotency-key')
