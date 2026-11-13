@@ -372,6 +372,70 @@ def answer_callback(callback_id: str) -> None:
         logging.getLogger(__name__).warning('Telegram callback acknowledgement failed')
 
 
+# Scan the primary without rank offsets, so concurrent deletions cannot shift unseen IDs.
+LEADERBOARD_BATCH = '''
+local scan=redis.call('ZSCAN','game:teams',ARGV[1],'COUNT',ARGV[2])
+local result={}
+for i=1,#scan[2],2 do
+ local id=scan[2][i]
+ local raw=redis.call('GET','game:session:'..id)
+ if raw then
+  local s=cjson.decode(raw)
+  if s.ready and (s.status=='submitted' or s.status=='timed_out') and type(s.score)=='number' and type(s.teamName)=='string' then
+   table.insert(result,cjson.encode({id=id,teamName=s.teamName,score=s.score,submittedAt=s.submittedAt}))
+  end
+ end
+end
+return {scan[1],result}
+'''
+
+
+def leaderboard(chat_id: str) -> None:
+    batch_size = 100
+    cursor = '0'
+    sessions = {}
+    while True:
+        cursor, batch = eval_script(LEADERBOARD_BATCH, [], [cursor, batch_size])
+        for raw in batch:
+            if not raw:
+                continue
+            session = json.loads(raw)
+            score = session.get('score')
+            if type(score) is int and isinstance(session.get('teamName'), str):
+                sessions[session['id']] = session
+        if cursor == '0':
+            break
+
+    if not sessions:
+        send_telegram(chat_id, '🏆 Рейтинг пока пуст. Ни одна команда ещё не завершила расследование')
+        return
+
+    def sort_key(item: tuple[str, dict]) -> tuple:
+        session_id, session = item
+        submitted = session.get('submittedAt')
+        # Missing completion times follow known times, with name and ID as stable ties.
+        known_time = type(submitted) in (int, float)
+        return (-session['score'], not known_time, submitted if known_time else 0,
+                session['teamName'].casefold(), session['teamName'], session_id)
+
+    lines = ['🏆 ОБЩИЙ РЕЙТИНГ\n']
+    for rank, (_, session) in enumerate(sorted(sessions.items(), key=sort_key), 1):
+        medal = {1: '🥇 ', 2: '🥈 ', 3: '🥉 '}.get(rank, '')
+        lines.append(f"{medal}{rank}. {session['teamName']} — {session['score']}/20")
+
+    # Count UTF-16 units conservatively for Telegram, keeping every row intact.
+    message = lines[0]
+    for line in lines[1:]:
+        candidate = message + '\n' + line
+        if len(candidate.encode('utf-16-le')) // 2 > 4096:
+            send_telegram(chat_id, message)
+            time.sleep(1)
+            message = line
+        else:
+            message = candidate
+    send_telegram(chat_id, message)
+
+
 def team_page(chat_id: str, page: int, deletion: bool = False) -> None:
     page = max(1, min(page, 100000))
     page_size = 10 if deletion else 5
@@ -426,6 +490,16 @@ def clear_team_button(chat_id: str, message_id: str) -> None:
             logging.getLogger(__name__).warning('Telegram button removal failed')
 
 
+def remove_delete_message(chat_id: str, message_id: str) -> None:
+    if not message_id.isdigit():
+        return
+    try:
+        telegram_call('deleteMessage', {'chat_id': chat_id, 'message_id': int(message_id)})
+    except RuntimeError:
+        logging.getLogger(__name__).warning('Telegram message deletion failed')
+        clear_team_button(chat_id, message_id)
+
+
 def send_delete_confirmation(chat_id: str, team_name: str, nonce: str) -> None:
     buttons = [
         [{'text': '✅ Подтвердить', 'callback_data': 'confirm:' + nonce}],
@@ -438,6 +512,8 @@ def handle_telegram_callback(callback: dict, chat_id: str, sender_id: str) -> No
     value = callback.get('data', '')
     if not isinstance(value, str):
         return
+    message_id = callback.get('message', {}).get('message_id')
+    message_id = str(message_id) if type(message_id) is int else ''
     if value.startswith(('dpage:', 'tpage:')):
         try:
             page = int(value.split(':', 1)[1])
@@ -446,8 +522,7 @@ def handle_telegram_callback(callback: dict, chat_id: str, sender_id: str) -> No
         team_page(chat_id, page, value.startswith('dpage:'))
     elif value.startswith(('team:', 'select:')):
         session_id = value.split(':', 1)[1]
-        message_id = callback.get('message', {}).get('message_id')
-        source = str(message_id) if value.startswith('team:') and type(message_id) is int else ''
+        source = message_id if value.startswith('team:') else ''
         raw = redis('GET', 'game:session:' + session_id)
         session = json.loads(raw) if raw else None
         if not session or not session.get('ready'):
@@ -478,9 +553,7 @@ def handle_telegram_callback(callback: dict, chat_id: str, sender_id: str) -> No
         nonce = value[7:]
         saved = redis('GET', 'game:confirm:' + nonce)
         if saved and saved.startswith(sender_id + ':') and redis('DEL', 'game:confirm:' + nonce):
-            send_telegram(chat_id, 'Удаление отменено.')
-        else:
-            send_telegram(chat_id, 'Подтверждение истекло или уже обработано.')
+            remove_delete_message(chat_id, message_id)
     elif value.startswith('confirm:'):
         nonce = value[8:]
         saved = redis('GET', 'game:confirm:' + nonce)
@@ -492,9 +565,10 @@ def handle_telegram_callback(callback: dict, chat_id: str, sender_id: str) -> No
         raw = eval_script(CONFIRM_DELETE, ['game:confirm:' + nonce, 'game:session:' + session_id], [saved])
         if raw:
             session = json.loads(raw)
-            if len(parts) > 2:
-                clear_team_button(chat_id, parts[2])
             cancel_message(session.get('messageId'))
+            remove_delete_message(chat_id, message_id)
+            if len(parts) > 2 and parts[2] != message_id:
+                remove_delete_message(chat_id, parts[2])
             send_telegram(chat_id, f"✅ Команда „{session['teamName']}“ удалена")
         else:
             if not redis('GET', 'game:session:' + session_id):
@@ -506,6 +580,7 @@ def handle_telegram_callback(callback: dict, chat_id: str, sender_id: str) -> No
 
 
 TEAM_LIST_BUTTON = '📋 Список команд'
+TEAM_RATING_BUTTON = '🏆 Общий рейтинг'
 START_READY = ('🟢 Artcode Detective — сервис работает\n\n'
                '✅ Telegram → Backend: соединение установлено\n\n'
                '✅ Backend → Redis: соединение установлено\n\n'
@@ -559,7 +634,7 @@ def handle_telegram(data: dict) -> None:
         if fresh:
             try:
                 send_telegram(chat_id, START_READY, reply_markup={
-                    'keyboard': [[{'text': TEAM_LIST_BUTTON}]],
+                    'keyboard': [[{'text': TEAM_LIST_BUTTON}, {'text': TEAM_RATING_BUTTON}]],
                     'resize_keyboard': True,
                     'is_persistent': True,
                 })
@@ -575,6 +650,8 @@ def handle_telegram(data: dict) -> None:
         return
     if isinstance(callback, dict):
         handle_telegram_callback(callback, chat_id, sender_id)
+    elif text == TEAM_RATING_BUTTON:
+        leaderboard(chat_id)
     elif text == TEAM_LIST_BUTTON or command == '/teams':
         team_page(chat_id, 1)
     elif command == '/delete':
