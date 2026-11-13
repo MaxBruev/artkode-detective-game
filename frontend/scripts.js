@@ -874,17 +874,17 @@ function renderLegend() {
     </section>`;
 }
 
-const sources = [
-  ["tracker", "Трекер задач · REL-280"],
-  ["chat", "Корпоративный чат · CI/CD"],
-  ["qa", "QA-система · отчёт"],
-  ["document", "Документ · release notes"],
-  ["chat", "Корпоративный чат · #release-2-8-0"],
-  ["log", "Системный журнал · AUTO-REL-04"],
-  ["board", "Рабочая доска · Product Release Board"],
-  ["deploy", "CI/CD · Production deployments"],
-  ["monitor", "Мониторинг · Production Health"],
-  ["archive", "Архив релизов · REL-270"]
+const materialSources = [
+  ['Карточка задачи', renderCollaborationMaterial],
+  ['Корпоративный чат', renderCollaborationMaterial],
+  ['QA-отчёт', renderTechnicalMaterial],
+  ['Корпоративный чат', renderCollaborationMaterial],
+  ['Корпоративный чат', renderCollaborationMaterial],
+  ['Журнал автоматизации', renderTechnicalMaterial],
+  ['Журнал событий', renderTechnicalMaterial],
+  ['CI/CD', renderTechnicalMaterial],
+  ['Мониторинг', renderTechnicalMaterial],
+  ['Архив релизов', renderTechnicalMaterial]
 ];
 
 function materialParts() {
@@ -893,56 +893,81 @@ function materialParts() {
     .filter(part => heading.test(part.trim()));
 }
 
-function renderMaterialBody(part, index) {
-  // Меняется только видимый заголовок; исходный текст и привязка ответов сохранены.
-  const number = String(index + 1).padStart(2, '0');
-  const displayPart = part.replace(/^## (?:УЛИКА|ЛОЖНЫЙ СЛЕД) № \d+\. /, '## ' + number + ' — ');
-  let content = markdown(displayPart)
-    .replace('<h3>', '<h2 id="material-title-' + (index + 1) + '">')
-    .replace('</h3>', '</h2>');
-  if (index === 0) {
-    content = content.replace('<div class="tablewrap">',
-      '<div class="tablewrap" tabindex="0" role="region" aria-label="Связанные задачи">');
+function materialBlock() {
+  return { fields: Object.create(null), rows: [], items: [], quotes: [] };
+}
+
+function parseMaterial(part) {
+  // Разбираем формат исходника материалов до генерации HTML. Markdown легенды и разбора не меняется.
+  const material = { ...materialBlock(), sections: Object.create(null), messages: [] };
+  let block = material;
+  let message = null;
+  for (const rawLine of part.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('## ') || /^---+$|^\|[-:| ]+\|$/.test(line)) continue;
+    const author = line.match(/^\*\*(\d{2}:\d{2}(?::\d{2})?) — (@[\w.]+)(?: \((.+)\))?\*\*$/);
+    const field = line.match(/^\*\*([^*]+):\*\*(?:\s+(.+))?$/);
+    if (author) {
+      const [, time, handle, name] = author;
+      const person = people.find(entry => entry[2].endsWith(handle));
+      message = { time, handle, name: name || person?.[1] || handle, text: '' };
+    } else if (field) {
+      const [, label, value] = field;
+      if (label === 'Тип материала') continue;
+      if (value === undefined) {
+        block = material.sections[label] = materialBlock();
+      } else {
+        material.fields[label] = value;
+        if (block !== material) block.fields[label] = value;
+      }
+    } else if (line.startsWith('|')) {
+      block.rows.push(line.slice(1, -1).split('|').map(cell => cell.trim()));
+    } else if (line.startsWith('- ')) {
+      block.items.push(line.slice(2));
+    } else if (line.startsWith('>')) {
+      const text = line.slice(1).trim();
+      if (message) {
+        message.text = text;
+        material.messages.push(message);
+        message = null;
+      } else {
+        block.quotes.push(text);
+      }
+    }
   }
-  // Вложенные карточки отделяются по уже существующим названиям вложений.
-  const attachmentClasses = {
-    'Прикреплённая карточка CI/CD:': 'ci',
-    'Прикреплённый QA-отчёт:': 'qa-report',
-    'Прикреплённый документ:': 'document-card'
-  };
-  content = content.replace(/(<p><strong>(Прикреплённая карточка CI\/CD:|Прикреплённый QA-отчёт:|Прикреплённый документ:)<\/strong><\/p>)([\s\S]*?)(?=<p><strong>Время завершения|$)/g,
-    (match, title, label, body) => '<div class="attachment ' + attachmentClasses[label] + '">' + title + body + '</div>');
-  // Группируем соседние пары «поле: значение», не меняя самих данных.
-  content = content.replace(/(?:<p><strong>[^<]+:<\/strong>[^<]+<\/p>){2,}/g,
-    group => '<div class="metadata">' + group + '</div>');
-  content = content.replace(/(<td>)(PASSED|CREATED|NOT STARTED|Done|DONE|READY|NOT PUBLISHED|NOT PERFORMED|SUCCESS|NOT FOUND|HEALTHY|ON|YES|NO)(<\/td>)/g,
-    '$1<span class="status">$2</span>$3');
-  content = content.replace(/<p><strong>([^<]*?@([\w.]+)[^<]*)<\/strong><\/p>\s*<blockquote>([\s\S]*?)<\/blockquote>/g,
-    (match, heading, handle, message) => {
-      const person = people.find(entry => entry[2].endsWith('@' + handle));
-      if (!person) return match;
-      return `
-        <div class="message">
-          ${avatar(person)}
-          <div class="message-body">
-            <p><strong>${heading}</strong></p>
-            <blockquote>${message}</blockquote>
-          </div>
-        </div>`;
-    });
-  return content;
+  return material;
+}
+
+function artifactStatus(value) {
+  const status = String(value ?? '').toUpperCase();
+  let tone = 'neutral';
+  if (['DONE', 'PASSED', 'CREATED', 'SUCCESS', 'COMPLETE', 'HEALTHY', 'READY'].includes(status)) tone = 'positive';
+  else if (status === 'IN PROGRESS' || status === 'ON') tone = 'active';
+  return '<span class="artifact-status artifact-status--' + tone + '">' + esc(value) + '</span>';
+}
+
+function artifactTime(value) {
+  const text = esc(value);
+  return /^\d{2}:\d{2}(?::\d{2})?$/.test(value)
+    ? '<time class="artifact-mono" datetime="' + text + '">' + text + '</time>'
+    : text;
+}
+
+function artifactFields(entries) {
+  if (!entries.length) return '';
+  return '<dl class="artifact-fields">' + entries.map(([label, value]) =>
+    '<div><dt>' + esc(label) + '</dt><dd>' + artifactTime(value) + '</dd></div>').join('') + '</dl>';
 }
 
 function renderMaterials() {
   const parts = materialParts();
   const cards = parts.map((part, index) => {
-    const [theme, source] = sources[index];
+    const [source, renderArtifact] = materialSources[index];
     const number = index + 1;
-    const label = String(number).padStart(2, '0');
     return `
-      <article class="material ${theme}" id="material-${number}" aria-labelledby="material-title-${number}">
-        <div class="sourcebar"><span>${esc(source)}</span><span>${label} / ${parts.length}</span></div>
-        <div class="prose">${renderMaterialBody(part, index)}</div>
+      <article class="material" id="material-${number}" aria-labelledby="material-title-${number}">
+        <header class="material-heading"><h2 id="material-title-${number}">${esc(source)}</h2></header>
+        <div class="artifact-content">${renderArtifact(parseMaterial(part), number)}</div>
       </article>`;
   });
   const tabs = cards.map((card, index) => {

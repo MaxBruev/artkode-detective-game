@@ -1,0 +1,58 @@
+.artifact-content .collab-tracker,
+.artifact-content .collab-chat { overflow: hidden; }
+.artifact-content .collab-tracker { padding: 20px; }
+.artifact-content .collab-tracker-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.artifact-content .collab-tracker-heading .artifact-title { margin: 5px 0 0; }
+.artifact-content .collab-tasks,
+.artifact-content .collab-notes { margin-top: 20px; }
+.artifact-content .collab-task-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--artifact-line); border-radius: 10px; overflow: hidden; }
+.artifact-content .collab-task { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; }
+.artifact-content .collab-task + .collab-task { border-top: 1px solid var(--artifact-line); }
+.artifact-content .collab-task > div { display: grid; gap: 4px; min-width: 0; }
+.artifact-content .collab-task-id,
+.artifact-content .collab-assignee { color: var(--artifact-muted); font-size: .82rem; }
+.artifact-content .collab-notes ul { margin: 0; padding-left: 20px; }
+.artifact-content .collab-notes li + li { margin-top: 8px; }
+.artifact-content .collab-chat-header { padding: 16px 20px; border-bottom: 1px solid var(--artifact-line); }
+.artifact-content .collab-chat-header .artifact-title { margin: 0 0 8px; }
+.artifact-content .collab-channel { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.artifact-content .collab-messages { padding: 4px 20px; }
+.artifact-content .collab-message { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; padding: 16px 0; }
+.artifact-content .collab-message + .collab-message { border-top: 1px solid var(--artifact-line); }
+.artifact-content .collab-avatar .avatar { width: 40px; height: 40px; }
+.artifact-content .collab-message-body { min-width: 0; }
+.artifact-content .collab-message-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.artifact-content .collab-message-meta span,
+.artifact-content .collab-message-meta time { color: var(--artifact-muted); font-size: .82rem; }
+.artifact-content .collab-message p { margin: 6px 0 0; overflow-wrap: anywhere; }
+.artifact-content .collab-attachment { margin-top: 14px; padding: 16px; border: 1px solid var(--artifact-line); border-radius: 10px; background: var(--artifact-inset); }
+.artifact-content .collab-attachment .artifact-section-title { margin-top: 0; }
+.artifact-content .collab-results { margin-top: 12px; }
+.artifact-content .collab-result { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--artifact-line); }
+.artifact-content .collab-completion { display: flex; flex-wrap: wrap; gap: 4px 8px; padding-top: 12px; border-top: 1px solid var(--artifact-line); font-size: .85rem; }
+.artifact-content .collab-completion span { color: var(--artifact-muted); }
+@media (max-width: 480px) {
+  .artifact-content .collab-tracker { padding: 14px; }
+  .artifact-content .collab-tracker-heading { flex-wrap: wrap; }
+  .artifact-content .collab-chat-header { padding: 14px; }
+  .artifact-content .collab-messages { padding: 4px 14px; }
+  .artifact-content .collab-message { grid-template-columns: 32px minmax(0, 1fr); gap: 8px; }
+  .artifact-content .collab-avatar .avatar { width: 32px; height: 32px; }
+  .artifact-content .collab-attachment { padding: 12px; }
+}
+.artifact-content .collab-current-status { display: grid; justify-items: start; gap: 4px; }
+.artifact-content .collab-pipeline-stages { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 16px 0 0; padding: 0; list-style: none; counter-reset: collab-stage; }
+.artifact-content .collab-pipeline-stages li { display: grid; align-content: start; justify-items: start; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--artifact-line); border-radius: 8px; counter-increment: collab-stage; overflow-wrap: anywhere; }
+.artifact-content .collab-pipeline-stages li::before { content: '0' counter(collab-stage); color: var(--artifact-muted); font-family: var(--mono); font-size: .75rem; }
+.artifact-content .collab-document-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 12px; }
+.artifact-content .collab-document-heading strong { font-size: 1.05rem; }
+.artifact-content .collab-document-heading span { color: var(--artifact-muted); font-size: .82rem; }
+.artifact-content .collab-task > .artifact-status { flex: none; white-space: nowrap; }
+@media (max-width: 480px) {
+  .artifact-content .collab-pipeline-stages { grid-template-columns: 1fr; }
+  .artifact-content .collab-pipeline-stages li { grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+  .artifact-content .collab-pipeline-stages li > .artifact-status { grid-column: 2; }
+}
+@media (max-width: 360px) {
+  .artifact-content .collab-attachment { margin-left: -40px; }
+}

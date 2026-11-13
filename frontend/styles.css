@@ -484,104 +484,65 @@ input::placeholder { color: #94a5ae; opacity: 1; }
 .material-tab:focus-visible, .material-tab[data-keyboard-focus]:focus { outline: 3px solid #e8c874; outline-offset: 2px; }
 .material-panel[hidden] { display: none; }
 .material {
-  display: block;
-  width: 100%;
+  --artifact-line: #36515f;
+  --artifact-inset: #0e1b24;
+  --artifact-muted: #b9cbd5;
+  --artifact-gap: clamp(12px, 1.7vw, 20px);
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: #14232c;
 }
-.material .sourcebar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 9px var(--card-padding);
-  border-radius: 15px 15px 0 0;
-  border-bottom: 1px solid #405562;
-  color: #d3e7ef;
-  font-size: .8rem;
+.material-heading {
+  padding: 10px var(--artifact-gap);
+  border-bottom: 1px solid var(--artifact-line);
+}
+.material-heading h2 {
+  margin: 0;
+  color: var(--artifact-muted);
+  font-size: .875rem;
   font-weight: 700;
 }
-.material .sourcebar span:last-child { white-space: nowrap; color: #bdced6; }
-.material .prose { max-width: none; padding: var(--card-padding); line-height: 1.35; }
-.material .prose h2 { margin: 0 0 10px; font-size: 1.16rem; line-height: 1.25; }
-.material .prose p { margin: 0 0 9px; }
-.material .prose ul { margin: 8px 0 14px; padding-left: 20px; }
-.material .prose li + li { margin-top: 4px; }
-.material .tablewrap { margin: 10px 0 16px; border: 1px solid #405562; border-radius: 8px; }
-.material .prose table { font-size: .875rem; table-layout: fixed; }
-.material .prose th, .material .prose td { padding: 7px 8px; overflow-wrap: anywhere; white-space: normal; }
-.material .prose th { color: #d8eaf0; background: #213642; }
-.material .prose tr:last-child td { border-bottom: 0; }
-.material.tracker .sourcebar, .material.board .sourcebar { background: #243b55; }
-.material.chat .sourcebar, .material.qa .sourcebar, .material.document .sourcebar { background: #392d4d; }
-.material.deploy .sourcebar { background: #493543; }
-.material.log .sourcebar, .material.archive .sourcebar { background: #303b40; }
-.material.monitor .sourcebar { background: #23423d; }
-.material.tracker { border-color: #6485ac; }
-.material.tracker .prose h2, .material.board .prose h2 { color: #d8e9ff; }
-.material.deploy { border-color: #916b88; }
-.material.deploy .tablewrap { border-left: 3px solid #d89079; }
-.material.monitor { border-color: #518779; }
-.material.monitor .tablewrap { border-left: 3px solid #72d8a2; }
-.material.monitor td:last-child { font-weight: 700; color: #d5f6e1; }
-.material.log .tablewrap, .material.archive .tablewrap { background: #09151b; }
-.material.log td:first-child, .material.archive td:first-child { color: #b8d4db; white-space: nowrap; }
-.material .attachment {
-  padding: 14px;
-  margin: 14px 0;
-  background: #0e1b24;
-  border: 1px solid #52636e;
+.artifact-content {
+  padding: var(--artifact-gap);
+  line-height: 1.45;
+}
+.artifact-surface {
+  min-width: 0;
+  border: 1px solid var(--artifact-line);
   border-radius: 10px;
+  background: var(--artifact-inset);
 }
-.material .attachment > p:first-child {
-  color: #d6e8f2;
-  font-weight: 700;
-  border-bottom: 1px solid #405562;
-  padding-bottom: 9px;
-}
-.material .attachment.ci { border-left: 3px solid #e99b72; }
-.material .attachment.qa-report { border-left: 3px solid #8fd8af; }
-.material .attachment.document-card { border-left: 3px solid #bda1ee; }
-.material .metadata {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 115px), 1fr));
-  gap: 8px;
-  margin: 12px 0;
-}
-.material.log .metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.material.deploy .metadata { grid-template-columns: repeat(auto-fit, minmax(min(100%, 148px), 1fr)); }
-.material .metadata p {
+.artifact-title {
   margin: 0;
-  padding: 8px 10px;
-  background: #1c303a;
-  border-radius: 7px;
+  font-size: clamp(1.18rem, 2.2vw, 1.75rem);
+  line-height: 1.2;
 }
-.material .metadata strong { display: block; color: #c3dae3; font-size: .78rem; }
-.material .status {
+.artifact-section-title { margin: 0 0 8px; font-size: 1rem; line-height: 1.3; }
+.artifact-label { color: var(--artifact-muted); font-size: .8rem; }
+.artifact-mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.artifact-fields {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 24px;
+  row-gap: 8px;
+  margin: 0;
+}
+.artifact-fields > div { min-width: 0; }
+.artifact-fields dt { color: var(--artifact-muted); font-size: .8rem; }
+.artifact-fields dd { margin: 2px 0 0; font-weight: 600; }
+.artifact-status {
   display: inline-block;
-  border-radius: 5px;
-  padding: 1px 5px;
-  color: #e5f1f3;
-  background: #385661;
-  font-weight: 700;
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  color: #c4d5df;
+  background: #22343f;
+  font: 700 .76rem/1.25 var(--mono);
 }
-.material.log .prose, .material.archive .tablewrap, .material.deploy .tablewrap {
-  font-family: var(--mono);
-}
-.material.log blockquote { border-left-color: #e8c874; background: #182326; }
-.material .message { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0; }
-.material .message .avatar {
-  flex: 0 0 38px;
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  font-size: 21px;
-  margin: 0;
-}
-.material .message-body { min-width: 0; flex: 1; }
-.material .message-body p { margin: 0 0 4px; }
-.material .message-body blockquote { border: 0; margin: 0; padding: 0; background: none; }
+.artifact-status--positive { color: #a8e5c1; background: #173630; }
+.artifact-status--active { color: #b7d5ff; background: #1f334e; }
 
 .section-title {
   display: flex;
@@ -590,18 +551,6 @@ input::placeholder { color: #94a5ae; opacity: 1; }
   gap: 4px 14px;
 }
 .section-title h1 { margin-bottom: 0; }
-.material .prose > :last-child, .material .attachment > :last-child { margin-bottom: 0; }
-.material.tracker table { min-width: 25rem; }
-.material.tracker th:first-child { width: 17%; }
-.material.tracker th:nth-child(2) { width: 34%; }
-.material.tracker th:nth-child(3) { width: 31%; }
-.material.log th:first-child, .material.archive th:first-child { width: 25%; }
-.material .status { overflow-wrap: normal; }
-
-@media (max-width: 550px) {
-  .material .attachment { padding: 10px; }
-  .material.log th:first-child, .material.archive th:first-child { width: 34%; }
-}
 
 /* Стрелки нативных списков */
 #section-tasks select {

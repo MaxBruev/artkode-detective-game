@@ -1,0 +1,47 @@
+.artifact-content .tech-artifact { display: grid; gap: var(--artifact-gap, 16px); min-width: 0; }
+.artifact-content .tech-header { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; min-width: 0; }
+.artifact-content .tech-header .artifact-title { margin-bottom: 0; overflow-wrap: anywhere; }
+.artifact-content .tech-id { color: var(--cyan); font-size: .85rem; overflow-wrap: anywhere; }
+.artifact-content .tech-panel { min-width: 0; padding: 16px; border: 1px solid var(--artifact-line, var(--line)); border-radius: 10px; background: var(--artifact-inset, #101e27); }
+.artifact-content .tech-panel > :last-child { margin-bottom: 0; }
+.artifact-content .tech-panel .artifact-section-title { margin: 0 0 12px; }
+.artifact-content .tech-panel > dl + .artifact-section-title { margin-top: 16px; }
+.artifact-content .tech-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.artifact-content .tech-rule { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.artifact-content .tech-details { margin: 0; }
+.artifact-content .tech-details > div, .artifact-content .tech-audit li { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 8px 16px; padding: 9px 0; border-bottom: 1px solid var(--artifact-line, var(--line)); }
+.artifact-content .tech-details > div:last-child, .artifact-content .tech-audit li:last-child { border-bottom: 0; }
+.artifact-content .tech-details dt, .artifact-content .tech-audit li > span { color: var(--artifact-muted, var(--muted)); overflow-wrap: anywhere; }
+.artifact-content .tech-details dd { margin: 0; overflow-wrap: anywhere; }
+.artifact-content .tech-timeline, .artifact-content .tech-audit { list-style: none; margin: 0; padding: 0; }
+.artifact-content .tech-timeline li { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--artifact-line, var(--line)); overflow-wrap: anywhere; }
+.artifact-content .tech-timeline li:last-child { border-bottom: 0; }
+.artifact-content .tech-time { color: var(--cyan); font-family: var(--mono); font-size: .85rem; }
+.artifact-content .tech-audit strong { font-weight: 600; overflow-wrap: anywhere; }
+.artifact-content .tech-header-status, .artifact-content .tech-snapshot, .artifact-content .tech-completion { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.artifact-content .tech-snapshot, .artifact-content .tech-completion span { color: var(--artifact-muted, var(--muted)); }
+.artifact-content .tech-snapshot { margin-top: 8px; font-size: .9rem; }
+.artifact-content .tech-completion { margin: 12px 0 0; }
+.artifact-content .tech-search-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 12px; border-radius: 8px; background: #0a1821; }
+.artifact-content .tech-search-summary > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.artifact-content .tech-search-summary > div:first-child { display: grid; }
+.artifact-content .tech-count { font-size: 2rem; line-height: 1; font-weight: 700; }
+.artifact-content .tech-deployment { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.artifact-content .tech-deployment dt, .artifact-content .tech-metric > span { color: var(--artifact-muted, var(--muted)); font-size: .85rem; }
+.artifact-content .tech-deployment dd { margin: 6px 0 0; overflow-wrap: anywhere; }
+.artifact-content .tech-metric-summary { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.artifact-content .tech-metric-summary > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.artifact-content .tech-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.artifact-content .tech-metric { display: grid; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--artifact-line, var(--line)); border-radius: 8px; background: #0a1821; }
+.artifact-content .tech-metric strong { font-size: clamp(1.2rem, 2.5vw, 1.7rem); overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  .artifact-content .tech-pair { grid-template-columns: 1fr; }
+  .artifact-content .tech-metrics, .artifact-content .tech-deployment { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .artifact-content .tech-details > div, .artifact-content .tech-audit li { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
+  .artifact-content .tech-details > .tech-long-value, .artifact-content .tech-audit .tech-long-value { grid-template-columns: 1fr; }
+  .artifact-content .tech-metric:last-child { grid-column: 1 / -1; }
+  .artifact-content .tech-panel { padding: 12px; }
+}
+@media (max-width: 400px) {
+  .artifact-content .tech-timeline li { grid-template-columns: 68px minmax(0, 1fr); gap: 6px; }
+}
